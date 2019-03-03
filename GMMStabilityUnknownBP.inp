@@ -1,0 +1,217 @@
+function matrix afwsunkwn (series y "Dependent variable",
+    list x "List of independend variables",
+    list z "List of instruments",
+    scalar trim "Trimming in %")
+  
+  
+    smpl y --contiguous
+  
+    sprintf first "%s", obslabel($t1)
+    sprintf last "%s", obslabel($t2)
+  
+    printf "Full sample: @first to  @last.\n"
+  
+  
+  
+    #==================================================================================
+  
+    #######################
+    #G M M  S E T T I N G S
+    #######################
+    set hac_prewhiten on	#data-dependend HAC lag length
+    set gmm_maxiter 2000
+  
+  
+    #######################################
+    # F U L L  S A M P L E  E S T I M A T E
+    #######################################
+    smpl @first @last
+    T = $nobs
+  
+    #Dependent
+    matrix Y = { y }
+    #Independent
+    matrix X = { x }				#indep. var
+    #Instruments
+    matrix Z = { z }				#instruments
+  
+    matrix W = $nobs*inv(Z'Z)			#initial weights
+    matrix b = ones(nelem(x),1)		#parameter vector
+    matrix e = muniform($nobs,1)	#residuals
+  
+    #Adjust matrices
+    matrix Y = Y[1:$nobs,]
+    matrix X = X[1:$nobs,]
+    matrix Z = Z[1:$nobs,]
+  
+    gmm e = Y - X*b
+        orthog e ; Z
+        weights W
+        params b
+    end gmm --iterate #--verbose
+  
+    vcvfull = $vcv
+    #print vcv
+    scalar Jstatfull = $["J_test"]
+  
+  
+    ##############
+    #1st subsample
+    ##############
+    smpl @first @last
+    t1 = $nobs
+    scalar Ttrim = round(T*trim)	#Number of obs. to cut-off
+
+    smpl @first @last
+
+    stsub1 = $t1+Ttrim#+1	#Bounded starting obs., +1 to make sure that both subsamples are equally sized
+    startsub1 = obslabel(start)
+    endsub1 = $t2-Ttrim	#Bounded ending obs.
+    endesub1 = obslabel(ende)
+  
+
+    #Matrices storing results
+    smpl @first @startsub1
+    Tr = $nobs
+    recvcv1 = {} #zeros(cols(X),cols(X)*Tr)	#first submodel
+    rectheta1 = {} #zeros(cols(X),Tr)		#coefficients first submodel
+    matrix pi1 = zeros(1,Tr)
+
+    smpl @first @strstart
+
+    scalar k = 1	#counter
+    loop j=@startsub1..@endesub1	#Recursive estimation within bounded s
+        pi1[k] = $nobs/T
+
+        #Dependent
+        matrix Y = { y }
+        #Independent
+        matrix X = { x }				#indep. var
+        #Instruments
+        matrix Z = { z }				#instruments
+  
+        matrix W = $nobs*inv(Z'Z)		#initial weights
+        matrix b = ones(nelem(x),1)	#parameter vector
+        matrix e = muniform($nobs,1)	#residuals
+  
+        #Adjust matrices
+        matrix Y = Y[1:$nobs,]
+        matrix X = X[1:$nobs,]
+        matrix Z = Z[1:$nobs,]
+  
+        gmm e = Y - X*b
+            orthog e ; Z
+            weights W
+            params b
+        end gmm --iterate #--verbose
+
+        tmp = $coeff
+        rectheta1 = rectheta1 ~ tmp
+        tmp = $vcv
+        recvcv1 = recvcv1 ~ tmp
+
+        scalar Jstat1 = $["J_test"]
+
+        k = k + 1
+        smpl ; +1
+    endloop
+
+  
+  
+    ##############
+    #2nd subsample
+    ##############
+    smpl @first @last	#1950@1 -- 2000:4
+    start = $t2-Ttrim	#Bounded ending obs.
+    startsub2 = obslabel(start)
+    ende = $t1+Ttrim	#+1	#Bounded starting obs.
+    endesub2 = obslabel(ende)
+
+    smpl @startsub2 @last
+    Tdiff = $nobs
+
+    #Matrices storing results
+    recvcv2 = {} #zeros(cols(X),cols(X)*Tr)	#second submodel
+    rectheta2 = {} #zeros(cols(X),Tr)		#coefficients second submodel
+    smpl @endesub2 @startsub2
+    scalar Tr = $nobs
+    matrix pi2 = zeros(1,Tr)
+
+    smpl @endesub2 @last
+
+    scalar k = 1	#counter
+    loop j = loop j = @endesub2..@startsub2
+        pi2[k] = $nobs/T
+
+        #Dependent
+        matrix Y = { y }
+        #Independent
+        matrix X = { x }				#indep. var
+        #Instruments
+        matrix Z = { z }				#instruments
+  
+        matrix W = $nobs*inv(Z'Z)		#initial weights
+        matrix b = ones(nelem(x),1)	#parameter vector
+        matrix e = muniform($nobs,1)	#residuals
+  
+        #Adjust matrices
+        matrix Y = Y[1:$nobs,]
+        matrix X = X[1:$nobs,]
+        matrix Z = Z[1:$nobs,]
+  
+        gmm e = Y - X*b
+            orthog e ; Z
+            weights W
+            params b
+        end gmm --iterate #--verbose
+
+        tmp = $coeff
+        rectheta2 = rectheta2 ~ tmp
+        tmp = $vcv
+        recvcv2 = recvcv2 ~ tmp
+
+        scalar Jstat2 = $["J_test"]
+
+        if $nobs >Tdiff	#exit the loop if last sample is reached (ca. 1993: 2000:4)
+            smpl +1 ;
+        else
+            break
+        endif
+        k = k + 1
+    endloop
+
+    #==================================================================================
+#========================================
+#Start calculation
+#-------------------------------------------------
+#Calculate relative time periods
+
+matrix AF1 = zeros(Tr,1)	#Store AF1-stat.
+scalar k = 1	#counter
+d = cols(recvcv1)/cols(rectheta1)
+loop j = 1..Tr #--quiet
+    matrix tmptheta1 = rectheta1[,j]
+    matrix tmptheta2 = rectheta2[,j]
+    matrix tmpthetad = tmptheta1 - tmptheta2
+    matrix tmpvcv1 = recvcv1[,k:k+d-1]
+    matrix tmpvcv2 = recvcv2[,k:k+d-1]
+    VW = (1/pi1[j])*inv(tmpvcv1) + (1/pi2[j])*inv(tmpvcv2)
+    #AF1[j] = T * tmpthetad' * inv(VW) * tmpthetad
+    AF1[j] = tmpthetad' * (inv(tmpvcv1/pi1[j] + tmpvcv2/pi2[j])) * tmpthetad
+    
+    k = k + d
+endloop
+SupAF1 = max(AF1)	#Sup stat.
+BpAF1 = imaxc(AF1)	#Break point
+AVAF1 = meanc(AF1)	#Avg
+Exp_a = meanc(exp((AF1).*0.5))
+Exp = log(Exp_a)
+
+smpl @strende @strstart
+genr series AF1s = AF1 
+gnuplot AF1s --time-series --with-lines --output=display
+
+
+ 
+#      return afwsout
+end function

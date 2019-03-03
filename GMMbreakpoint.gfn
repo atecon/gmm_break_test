@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gretl-functions>
+<gretl-function-package name="GMMbreakpoint" ID="1337968614" needs-time-series-data="true" minver="1.9.9">
+<author>Artur Tarassow</author>
+<version>1.02</version>
+<date>2012-06-01</date>
+<description>Tests on parameter constancy for a KNOWN BP (GMM)</description>
+<help>
+Tests on parameter constancy for a KNOWN breakpoint
+</help>
+<gretl-function name="afws" type="matrix">
+ <params count="4">
+  <param name="y" type="series">
+<description>Dependent variable</description>
+  </param>
+  <param name="x" type="list">
+<description>List of independend variables</description>
+  </param>
+  <param name="z" type="list">
+<description>List of instruments</description>
+  </param>
+  <param name="breakdate" type="string">
+<description>Obs. where the break takes place</description>
+  </param>
+ </params>
+<code>
+
+#smpl y --contiguous
+
+sprintf first &quot;%s&quot;, obslabel($t1)
+sprintf last &quot;%s&quot;, obslabel($t2)
+
+printf &quot;Full sample: @first to  @last.\n&quot;
+printf &quot;The tested breakpoint is at @breakdate.\n&quot;
+
+
+
+#==================================================================================
+
+#######################
+#G M M  S E T T I N G S
+#######################
+set hac_prewhiten on	#data-dependend HAC lag length
+set gmm_maxiter 2000
+
+
+#######################################
+# F U L L  S A M P L E  E S T I M A T E
+#######################################
+smpl @first @last
+T = $nobs
+
+#Dependent
+matrix Y = { y }
+#Independent
+matrix X = { x }					#indep. var
+#Instruments
+matrix Z = { z }					#instruments
+
+matrix W = $nobs*inv(Z'Z)			#initial weights
+matrix b = ones(nelem(x),1)		#parameter vector
+matrix e = muniform($nobs,1)		#residuals
+
+#Adjust matrices
+matrix Y = Y[1:$nobs,]
+matrix X = X[1:$nobs,]
+matrix Z = Z[1:$nobs,]
+
+gmm e = Y - X*b
+  orthog e ; Z
+  weights W
+  params b
+end gmm --two-step #--verbose
+
+vcvfull = $vcv
+#print vcv
+scalar Jstatfull = $[&quot;J_test&quot;]
+
+
+##############
+#1st subsample
+##############
+smpl @first @breakdate
+t1 = $nobs
+tau1 = t1/T
+
+#Dependent
+matrix Y = { y }
+#Independent
+matrix X = { x }				#indep. var
+#Instruments
+matrix Z = { z }				#instruments
+
+matrix W = $nobs*inv(Z'Z)			#initial weights
+matrix b = ones(nelem(x),1)		#parameter vector
+matrix e = muniform($nobs,1)	#residuals
+
+#Adjust matrices
+matrix Y = Y[1:$nobs,]
+matrix X = X[1:$nobs,]
+matrix Z = Z[1:$nobs,]
+
+gmm e = Y - X*b
+  orthog e ; Z
+  weights W
+  params b
+end gmm --two-step #--verbose
+
+theta1 = $coeff
+vcv1 = $vcv
+scalar Jstat1 = $[&quot;J_test&quot;]
+
+
+
+#################################
+#2nd subsample -- break at 1974:4
+#################################
+smpl @breakdate+1 @last
+t2 = $nobs
+tau2 = t2/T
+
+#Dependent
+matrix Y = { y }
+#Independent
+matrix X = { x }				#indep. var
+#Instruments
+matrix Z = { z }				#instruments
+
+matrix W = $nobs*inv(Z'Z)			#initial weights
+matrix b = ones(nelem(x),1)		#parameter vector
+matrix e = muniform($nobs,1)	#residuals
+
+#Adjust matrices
+matrix Y = Y[1:$nobs,]
+matrix X = X[1:$nobs,]
+matrix Z = Z[1:$nobs,]
+
+gmm e = Y - X*b
+  orthog e ; Z
+  weights W
+  params b
+end gmm --two-step #--verbose
+
+theta2 = $coeff
+vcv2 = $vcv
+scalar Jstat2 = $[&quot;J_test&quot;]
+
+
+#==================================================================================
+
+
+
+scalar m = 2	#No. of subsamples is always 2 since we allow only test for one break
+
+#     print &quot;------------------------------------------&quot;
+#     printf &quot;Andrews-Fair Wald and LR-type statistics \n\
+#     for a single break point case for GMM \n&quot;
+#     printf &quot;H0: No structural breaks in the equation\n \
+#     parameters under consideration that VCV varies\n \
+#     between the subsamples\n&quot;
+#     print &quot;------------------------------------------&quot;
+
+#Save test-stats and p-values
+/*
+matrix afwsout = zeros(2,3)
+colnames(afwsout, &quot;Wald LR OTest&quot;)
+rownames(afwsout, &quot;teststat pvalue&quot;)
+*/
+matrix afwsout = zeros(2,2)
+colnames(afwsout, &quot;Wald OTest&quot;)
+rownames(afwsout, &quot;tstat pvalue&quot;)
+
+#Calculate the Andrews-Fair Wald Statistics
+#scalar AF1 = (theta1 - theta2)' * inv(1/tau1 * inv(vcv1) + 1/tau2 * inv(vcv2)) * (theta1 - theta2)	#This formular is given in the Eviews HB
+#scalar AF1 = (theta1 - theta2)' * inv(vcv1/tau1 + vcv2/tau2 ) *  (theta1 - theta2)	#Formular as in Andrews/air (1988)
+#VW = (1/tau1)*inv(vcv1) + (1/tau2)*inv(vcv2)		#as used in official codes
+#scalar AF1 = T*(theta1 - theta2)' * inv(VW) * (theta1 - theta2) #as used in official codes
+VW = (1/tau1)*vcv1 + (1/tau2)*vcv2
+scalar AF1 = (theta1 - theta2)' * inv(VW) * (theta1 - theta2)
+afwsout[1,1] = AF1
+scalar df1 = (m-1)*rows(theta1)
+scalar AF1pv = pvalue(X, df1, AF1)
+afwsout[2,1] = AF1pv
+##Critical value at the CV% level
+#scalar critAF1 = critical(X,df1,CV)
+
+/*  Turn this block off for the moment -- needs modification since the LR-test is incorrect!
+#Calculate the Andrews-Fair LR-type Statistics -- NOT reliable yet!!
+scalar AF2 = Jstatfull - (1/t1 * Jstat1 + 1/t2 * Jstat2)
+afwsout[1,2] = AF2
+scalar df2 = (m-1)*rows(theta1)
+if AF2 &gt;= 0
+  scalar AF2pv = pvalue(X, df2, AF2)
+else
+  scalar AF2pv = NA
+endif
+afwsout[2,2] = AF2pv
+##Critical value at the CV% level
+#scalar critAF2 = critical(X,df2,CV)
+*/
+
+#Calculate the Hall-Sen O-Statistics
+scalar Ot = Jstat1 + Jstat2
+#afwsout[1,3] = Ot
+afwsout[1,2] = Ot
+scalar instruments = cols(Z)
+scalar df3 = 2*(instruments-(m-1)*rows(theta1))
+scalar Otpv = pvalue(X, df3, Ot)
+#afwsout[2,3] = Otpv
+afwsout[2,2] = Otpv
+##Critical value at the CV% level
+#scalar critOt = critical(X,df3,CV)
+
+#colnames(afwsout, &quot;Wald LR OT&quot;)
+colnames(afwsout, &quot;Wald OT&quot;)
+rownames(afwsout, &quot;teststat pvalue&quot;)
+
+printf &quot;Breakpoint Test: @breakdate \n     Equation Sample: @first to @last \n&quot;
+printf &quot;=======================================================================\n&quot;
+printf &quot;Wald-test: The null hypothesis (no break)\n&quot;
+printf &quot;Andrews-Fair Wald Stat. = %.3f \t Prob. Chi²(%.3g) = %.3f\n&quot;, AF1, df1, AF1pv
+printf &quot;----------------------------------------------------------------------------\n&quot;
+#   if AF1 &gt;= critAF1 &amp;&amp; critAF1 &gt;= 0
+#     printf &quot;Wald-test: The null hypothesis (no break) is rejected!\n         \n&quot;
+#   elif AF1 &gt;= critAF1 &amp;&amp; critAF1 &gt;= 0
+#     printf &quot;Wald-test: The null hypothesis (no break) is not rejected!\n         \n&quot;
+#   else
+#     printf &quot;Wald-test is not applicable!\n&quot;
+#   endif
+
+/* 					 N O T   R E L I A B L E  Y E T !!!!
+printf &quot;LR-test: The null hypothesis (no break) -- THIS TEST IS NOT REALIABLE, YET!!!\n&quot;
+printf &quot;Andrews-Fair LR-type = %.3f \t Prob. Chi²(%.3g) = %.3f\n&quot;, AF2, df2, AF2pv
+printf &quot;----------------------------------------------------------------------------\n&quot;
+*/
+
+#   if AF2 &gt;= critAF2 &amp;&amp; critAF2 &gt;= 0
+#     printf &quot;LR-test: The null hypothesis (no break) is rejected!\n         \n&quot;
+#   elif AF2 &lt;= critAF2 &amp;&amp; critAF2 &gt;= 0
+#     printf &quot;LR-test: The null hypothesis (no break) is not rejected!\n         \n&quot;
+#   else
+#     printf &quot;LR-test is not applicable!\n&quot;
+#   endif
+#
+printf &quot;Hall/Sen-test: The null hypothesis (over-identifying restrictions are stable over the entire sample)\n&quot;
+printf &quot;Hall/Sen O-Statistics = %.3f \t Prob. Chi²(%.3g) = %.3f\n&quot;, Ot, df3, Otpv
+#   if Ot &gt;= critOt &amp;&amp; critOt &gt;=0
+#     printf &quot;Hall/Sen-test: The null hypothesis (over-identifying restrictions \n         are stable over the entire sample) is rejected!\n         \n&quot;
+#   elif Ot &lt;= critOt &amp;&amp; critOt &gt;=0
+#     printf &quot;Hall/Sen-test: The null hypothesis (over-identifying restrictions \n         are stable over the entire sample) is not rejected!\n         \n&quot;
+#   else
+#     printf &quot;Hall/Sen-test is not applicable!\n&quot;
+#   endif
+printf &quot;=======================================================================\n&quot;
+
+
+#     printf &quot;Test-statistics = %.3f\n&quot;, AF1
+#     printf &quot;P-value (Chi²(%.3g) = %.3f\n&quot;, df, AF1pv
+#     printf &quot;%.2g%% critical value = %.3g \n&quot;, CV, crit
+#     print &quot;------------------------------------------&quot;
+#
+#     if AF1 &gt; crit
+#         print &quot;The null hypothesis (no break) is rejected!&quot;
+#     else
+#         print &quot;The null hypothesis (no break) is not rejected!&quot;
+#     endif
+#     print &quot;------------------------------------------&quot;
+return afwsout
+</code>
+</gretl-function>
+<sample-script>
+set echo off
+set messages off
+open &quot;C:\Program Files (x86)\EViews7\Example Files\EV7 Manual Data\Chapter 32 - Vector Autoregression and Error Correction Models\var1.wf1&quot;
+
+sprintf first &quot;%s&quot;, &quot;1960:1&quot;
+print first
+sprintf breakdate &quot;%s&quot;, &quot;1974:4&quot;
+print breakdate
+sprintf last &quot;%s&quot;, &quot;1995:4&quot;
+print last
+smpl @first @last
+
+######################################################
+##					Specifications					##
+######################################################
+#Dependent
+matrix Y = { M1 }	#dep. var
+
+#Independent
+list x1 = const IP TB3
+matrix XX1 = { x1 }			#indep. var
+
+#Instruments
+##1 BENCHMARK  spec.
+list z1 = const IP(-1) TB6 TB10Y
+matrix Z1 = { z1 }			#instruments
+
+
+
+
+/*
+Function inputs:
+    series y &quot;Dependent variable&quot;,
+    list x &quot;List of independend variables&quot;,
+    list z &quot;List of instruments&quot;,
+    string breakdate &quot;Obs. where the break takes place&quot;)
+*/
+
+matrix afwso = afws(M1, x1, z1, breakdate)
+print afwso
+
+
+##############
+#Full sample
+##############
+smpl @first @last
+T = $nobs
+
+
+matrix W = inv(Z1'Z1)		#initial weights
+matrix b = ones(nelem(x1),1)
+matrix e = muniform($nobs,1)		#generate an initial residual vector adding an obs each round j
+            
+#Matrices for the case that no lagged or forward-looking variables in Yt or Xt
+matrix Yt = Y[1:$nobs,]	
+matrix Xt = XX1[1:$nobs,]
+matrix Zt = Z1[1:$nobs,]
+
+set hac_prewhiten off
+      
+gmm e = Yt - Xt*b
+    orthog e ; Zt
+    weights W
+    params b
+end gmm --two-step #--verbose
+
+vcv = $vcv
+print vcv
+
+scalar Jstatfull = $[&quot;J_test&quot;]
+
+
+
+##############
+#1st subsample
+##############
+smpl @first @breakdate
+t1 = $nobs
+
+#Dependent
+matrix Y = { M1 }	#dep. var
+
+#Independent
+list x1 = const IP TB3
+matrix XX1 = { x1 }			#indep. var
+
+#Instruments
+##1 BENCHMARK  spec.
+list z1 = const IP(-1) TB6 TB10Y
+matrix Z1 = { z1 }			#instruments
+
+#GMM
+matrix W = inv(Z1'Z1)		#initial weights
+matrix b = ones(nelem(x1),1)
+matrix e = muniform($nobs,1)		#generate an initial residual vector adding an obs each round j
+            
+#Matrices for the case that no lagged or forward-looking variables in Yt or Xt
+matrix Yt = Y[1:$nobs,]	
+matrix Xt = XX1[1:$nobs,]
+matrix Zt = Z1[1:$nobs,]
+            
+gmm e = Yt - Xt*b
+    orthog e ; Zt
+    weights W
+    params b
+end gmm --two-step #--verbose
+
+theta1 = $coeff
+vcv1 = $vcv
+
+scalar Jstat1 = $[&quot;J_test&quot;]
+
+
+#################################
+#2nd subsample -- break at 1974:4
+#################################
+smpl @breakdate+1 @last
+t2 = $nobs
+
+#Dependent
+matrix Y = { M1 }	#dep. var
+
+#Independent
+list x1 = const IP TB3
+matrix XX1 = { x1 }			#indep. var
+
+#Instruments
+##1 BENCHMARK  spec.
+list z1 = const IP(-1) TB6 TB10Y
+matrix Z1 = { z1 }			#instruments
+
+
+#GMM
+matrix W = inv(Z1'Z1)		#initial weights
+matrix b = ones(nelem(x1),1)
+matrix e = muniform($nobs,1)		#generate an initial residual vector adding an obs each round j
+            
+#Matrices for the case that no lagged or forward-looking variables in Yt or Xt
+matrix Yt = Y[1:$nobs,]	
+matrix Xt = XX1[1:$nobs,]
+matrix Zt = Z1[1:$nobs,]
+            
+gmm e = Yt - Xt*b
+    orthog e ; Zt
+    weights W
+    params b
+end gmm --two-step #--verbose
+
+theta2 = $coeff
+vcv2 = $vcv
+
+scalar Jstat2 = $[&quot;J_test&quot;]
+
+
+#Run the Andrews-Fair test
+win = $windows
+if win = 1
+    include C:\Users\artur.tarassow\Dropbox\gretl_script\GMMbreakpoint.gfn
+else
+    include /home/artur/Dropbox/gretl_script/GMMbreakpoint.gfn
+endif
+
+#by hand
+smpl @first @last
+T = $nobs
+smpl @first @breakdate
+t1 = $nobs
+smpl @breakdate+1 @last
+t2 = $nobs
+t1 = t1/T
+t2 = t2/T
+
+test = (1/t1)*inv(vcv1)
+test2 = inv((1/t1)*vcv1)
+print test test2
+
+VW = (1/t1)*inv(vcv1) + (1/t2)*inv(vcv2)
+scalar AF1 = T * (theta1 - theta2)' * inv(VW) * (theta1 - theta2)
+printf &quot;wald stat = %.3f\n&quot;, AF1
+</sample-script>
+</gretl-function-package>
+</gretl-functions>

@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gretl-functions>
+<gretl-function-package name="GMMUnknownBreakPoint" ID="1338569668" needs-time-series-data="true" minver="1.9.8">
+<author>Artur.Tarassow</author>
+<version>1.02</version>
+<date>2012-07-05</date>
+<description>GMM</description>
+<help>
+blabla
+
+
+
+/*
+function matrix afwsunkwn (
+    series y &quot;Dependent variable&quot;,
+    list x &quot;List of independend variables&quot;,
+    list z &quot;List of instruments&quot;,
+    scalar trim &quot;Trimming in %&quot;,
+    scalar maxlag &quot;Max. lag length in x/z&quot;,
+    scalar maxlead &quot;Max. lead length in x/z&quot;
+*/
+    
+test = afwsunkwn(mr, x, z, 0.15, plag, plead)
+</help>
+<gretl-function name="afwsunkwn" type="matrix">
+ <params count="6">
+  <param name="y" type="series">
+<description>Dependent variable</description>
+  </param>
+  <param name="x" type="list">
+<description>List of independend variables</description>
+  </param>
+  <param name="z" type="list">
+<description>List of instruments</description>
+  </param>
+  <param name="trim" type="scalar">
+<description>Trimming in %</description>
+  </param>
+  <param name="maxlagx" type="scalar">
+<description>Max. lag length in x</description>
+  </param>
+  <param name="maxlagz" type="scalar">
+<description>Max. lag length in z</description>
+  </param>
+ </params>
+<code>#smpl y --contiguous
+sprintf first &quot;%s&quot;, obslabel($t1)
+sprintf last &quot;%s&quot;, obslabel($t2)
+printf &quot;Full sample: @first to  @last.\n&quot;
+scalar pmix = maxlagx + 1
+scalar pmixmax = pmix + maxlagz
+#==================================================================================
+#######################
+#G M M  S E T T I N G S
+#######################
+set hac_prewhiten on	#data-dependend HAC lag length
+set gmm_maxiter 2500
+#######################################
+# F U L L  S A M P L E  E S T I M A T E
+#######################################
+smpl @first+pmixmax @last
+T = $nobs
+#Dependent
+matrix Y = { y }
+#Independent
+matrix X = { x }				#indep. var
+#Instruments
+matrix Z = { z }				#instruments
+matrix W = $nobs*inv(Z'Z)			#initial weights
+matrix b = ones(nelem(x),1)		#parameter vector
+matrix e = muniform($nobs,1)	#residuals
+#Adjust matrices
+matrix Y = Y[1:$nobs,]
+matrix X = X[1:$nobs,]
+matrix Z = Z[1:$nobs,]
+#   matrix Y = Y[1+maxlag:$nobs-maxlead,]
+#   matrix X = X[1+maxlag:$nobs-maxlead,]
+#   matrix Z = Z[1+maxlag:$nobs-maxlead,]
+gmm e = Y - X*b
+  orthog e ; Z
+  weights W
+  params b
+end gmm --two-step #--verbose
+vcvfull = $vcv
+#print vcv
+#scalar Jstatfull = $[&quot;J_test&quot;]
+
+##############
+#1st subsample
+##############
+smpl @first @last
+t1 = $nobs
+scalar Ttrim = round(T*trim)	#Number of obs. to cut-off
+smpl @first+pmixmax @last
+start = $t1+Ttrim#+1	#Bounded starting obs., +1 to make sure that both subsamples are equally sized
+startsub1 = obslabel(start)
+ende = $t2-Ttrim	#Bounded ending obs.
+endesub1 = obslabel(ende)
+
+#Matrices storing results
+smpl @startsub1 @endesub1
+Tr = $nobs
+matrix recvcv1 = {} #zeros(cols(X),cols(X)*Tr)	#first submodel
+matrix rectheta1 = {} #zeros(cols(X),Tr)		#coefficients first submodel
+matrix recjstat1 = {}
+matrix pi1 = zeros(1,Tr)
+
+smpl @first+pmixmax @startsub1
+
+scalar k = 1	#counter
+loop j=@startsub1..@endesub1 --quiet	#Recursive estimation within bounded s
+  pi1[k] = $nobs/T
+  #Dependent
+  matrix Y = { y }
+  #Independent
+  matrix X = { x }				#indep. var
+  #Instruments
+  matrix Z = { z }				#instruments
+  matrix W = $nobs*inv(Z'Z)		#initial weights
+  matrix b = ones(nelem(x),1)	#parameter vector
+  matrix e = muniform($nobs,1)	#residuals
+  #Adjust matrices
+  matrix Y = Y[1:$nobs,]
+  matrix X = X[1:$nobs,]
+  matrix Z = Z[1:$nobs,]
+  gmm e = Y - X*b
+    orthog e ; Z
+    weights W
+    params b
+  end gmm --two-step #--verbose
+  tmpc = $coeff
+  rectheta1 = rectheta1 ~ tmpc
+  tmpvcv = $vcv
+  recvcv1 = recvcv1 ~ tmpvcv
+  recjstat1 = recjstat1 ~ $[&quot;J_test&quot;]
+  k = k + 1
+  smpl ; +1
+endloop
+
+##############
+#2nd subsample
+##############
+smpl @first @last
+start = $t2-Ttrim	#Bounded ending obs.
+startsub2 = obslabel(start)
+ende = $t1+Ttrim	#+1	#Bounded starting obs.
+endesub2 = obslabel(ende+pmixmax)
+
+smpl @startsub2 @last
+Tdiff = $nobs
+#Matrices storing results
+matrix recvcv2 = {} #zeros(cols(X),cols(X)*Tr)	#second submodel
+matrix rectheta2 = {} #zeros(cols(X),Tr)		#coefficients second submodel
+matrix recjstat2 = {}
+smpl @endesub2 @startsub2
+scalar Tr = $nobs
+matrix pi2 = zeros(1,Tr)
+
+smpl @endesub2 @last
+
+scalar k = 1	#counter
+loop j = @endesub2..@startsub2 --quiet
+  pi2[k] = $nobs/T
+  #Dependent
+  matrix Y = { y }
+  #Independent
+  matrix X = { x }				#indep. var
+  #Instruments
+  matrix Z = { z }				#instruments
+  matrix W = $nobs*inv(Z'Z)		#initial weights
+  matrix b = ones(nelem(x),1)	#parameter vector
+  matrix e = muniform($nobs,1)	#residuals
+  #Adjust matrices
+  matrix Y = Y[1:$nobs,]
+  matrix X = X[1:$nobs,]
+  matrix Z = Z[1:$nobs,]
+  gmm e = Y - X*b
+    orthog e ; Z
+    weights W
+    params b
+  end gmm --two-step #--verbose
+  tmpc = $coeff
+  rectheta2 = rectheta2 ~ tmpc
+  tmpvcv = $vcv
+  recvcv2 = recvcv2 ~ tmpvcv
+  recjstat2 = recjstat2 ~ $[&quot;J_test&quot;]
+  if $nobs &gt;Tdiff	#exit the loop if last sample is reached (ca. 1993: 2000:4)
+    smpl +1 ;
+  else
+    break
+  endif
+  k = k + 1
+endloop
+#==================================================================================
+#========================================
+#Start calculation
+#-------------------------------------------------
+#Calculate relative time periods
+matrix AF1 = zeros(Tr,1)	#Store AF1-stat.
+matrix OT = zeros(Tr,1)	#Hall-Sen O-statistics
+scalar k = 1	#counter
+d = cols(recvcv1)/cols(rectheta1)
+loop j = 1..Tr --quiet
+  matrix tmptheta1 = rectheta1[,j]
+  matrix tmptheta2 = rectheta2[,j]
+  matrix tmpthetad = tmptheta1 - tmptheta2
+  matrix tmpvcv1 = recvcv1[,k:k+d-1]
+  matrix tmpvcv2 = recvcv2[,k:k+d-1]
+  VW = (1/pi1[j])*tmpvcv1 + (1/pi2[j])*tmpvcv2
+  AF1[j] = tmpthetad' * inv(VW) * tmpthetad
+  OT[j] = recjstat1[,j] + recjstat2[,j]
+  k = k + d
+endloop
+smpl @startsub1 @startsub2
+
+#AF1 - WALD test
+SupAF1 = max(AF1)	#Sup stat.
+tdiff = obsnum(@first) - 1	#$t1 is the very first obs of the unrestricted sample!
+BpAF1 = imaxc(AF1) + tdiff + Tdiff -1	#Break point -- FOR SOME reason gretl starts at the very first obs and does not consider
+#the restricted sample! Thus, one has to add the difference between the very first obs. and
+#the first obs. of the restricted sample!
+BPAF1 = obslabel(BpAF1)
+AVAF1 = meanc(AF1)	#Avg
+Exp_a = meanc(exp((AF1).*0.5))
+ExpAF1 = log(Exp_a)
+
+#OT - Hall-Senn O-statistics
+SupOT = max(OT)	#Sup stat.
+BpOT = imaxc(OT) + tdiff + Tdiff - 1	#Break point --&gt; Added Tdiff-1
+BPOT = obslabel(BpOT)
+AVOT = meanc(OT)	#Avg
+Exp_a = meanc(exp((OT).*0.5))
+ExpOT = log(Exp_a)
+
+
+
+
+
+#===================================================================
+#			Critical points for SupWald, AvgWald and ExpWald
+#			Values are taken from Andrews (2003): &quot;Tests for Parameter Instability and Structural Change with Unknown Change Point: A
+#			Corrigendum&quot;
+#			Andrews/Ploberger (1994): &quot;Optimal Tests when a Nuisance Parameter is Present Only Under the Alternative&quot;
+#
+#			Significance level for PI = [0.15, 0.85] -- trimming factor
+#====================================================================
+matrix critSupWald = {7.12, 8.68, 12.16; 10.00, 11.72, 15.56; 12.28, 14.13, 18.07; 14.34, 16.36, 20.47; 16.30, 18.32, 22.66; 18.11, 20.24, 24.74; 19.87, 22.06, 26.72; 21.55, 23.82, 28.55; 23.20, 25.54, 30.42; 24.80, 27.13, 32.31; 26.38, 28.81, 33.96; 27.90, 30.43, 35.67; 29.45, 32.04, 37.29; 30.98, 33.56, 38.96; 32.47, 35.10, 40.68; 33.92, 36.64, 42.27; 35.39, 38.21, 43.90; 36.87, 39.65, 45.50; 38.27, 41.14, 47.03; 39.72, 42.68, 48.59 }
+
+#   matrix critSupWald = {7.12, 8.68, 12.16; \
+#   10.00, 11.72, 15.56; \
+#   12.28, 14.13, 18.07; \
+#   14.34, 16.36, 20.47; \
+#   16.30, 18.32, 22.66; \
+#   18.11, 20.24, 24.74; \
+#   19.87, 22.06, 24.74; \
+#   21.55, 23.82, 28.55; \
+#   23.20, 25.54, 30.42; \
+#   24.80, 27.13, 32.31; \
+#   26.38, 28.81, 33.96; \
+#   27.90, 30.43, 35.67}
+#colnames(critSupWald, &quot;10perc 5perc 1perc&quot;)
+
+matrix critAvgWald = { 2.16, 2.88, 4.72; 3.75, 4.61, 6.73; 5.10, 6.07, 8.21; 6.50, 7.67, 10.18; 7.76, 9.01, 11.32; 9.02, 10.19, 12.93; 10.28, 11.47, 14.34; 11.54, 12.94, 16.14; 12.71, 14.16, 17.30; 13.77, 15.29, 18.72; 15.00, 16.46, 19.44; 16.31, 17.85, 21.03; 17.18, 18.80, 22.55; 18.41, 20.12, 23.77; 19.79, 21.56, 25.26; 20.98, 22.73, 26.43; 22.00, 23.87, 27.69; 23.22, 25.03, 28.63; 24.40, 26.30, 30.23; 25.50, 27.38, 31.19 }
+colnames(critAvgWald, &quot;10perc 5perc 1perc&quot;)
+
+matrix critExpWald = { 1.51, 2.06, 3.41; 2.59, 3.22, 4.76; 3.49, 4.22, 5.77; 4.37, 5.23, 7.13; 5.22, 6.13, 7.91; 6.01, 6.92, 8.96; 6.70, 7.66, 9.53; 7.58, 8.60, 10.96; 8.31, 9.35, 11.67; 9.00, 10.04, 12.61; 9.69, 10.75, 13.21; 10.45, 11.55, 13.83; 11.10, 12.28, 14.64; 11.84, 13.09, 15.76; 12.69, 13.84, 16.37; 13.33, 14.63, 17.25; 14.05, 15.30, 17.93; 14.74, 15.93, 18.55; 15.43, 16.73, 19.58; 16.16, 17.57, 20.18 }
+colnames(critExpWald, &quot;10perc 5perc 1perc&quot;)
+
+
+#===========================================================
+#			Critical points for SupWald, AvgWald and ExpWald
+#			Values are taken from Hall (2005:183) who took them
+#			from Hall/Sen (1999)
+#Significance level for PI = [0.15, 0.85]
+
+matrix critSupOT = { 8.70, 10.39, 14.13; 12.78, 14.75, 18.53; 16.33, 18.53, 23.19; 19.65, 21.99, 26.99; 22.81, 25.31, 30.55; 25.70, 28.32, 33.90; 28.76, 31.45, 37.03; 31.61, 34.53, 40.09 }
+colnames(critSupOT, &quot;10perc 5perc 1perc&quot;)
+
+matrix critAvgOT = { 4.17, 5.37, 8.11; 7.21, 8.60, 11.96; 9.91, 11.54, 15.40; 12.51, 14.32, 18.28; 15.01, 17.01, 21.39; 17.52, 19.68, 24.02; 19.91, 22.24, 27.00; 22.44, 24.78, 29.52 }
+colnames(critAvgOT, &quot;10perc 5perc 1perc&quot;)
+
+matrix critExpOT = { 2.45, 3.13, 4.69; 4.17, 4.99, 6.87; 5.73, 6.69, 8.81; 7.20, 8.26, 10.43; 8.64, 9.77, 12.20; 10.02, 11.21, 13.85; 11.41, 12.69, 15.33; 12.79, 14.12, 16.80 }
+colnames(critExpOT, &quot;10perc 5perc 1perc&quot;)
+
+
+#===========================================================
+
+
+
+#Summarize statistics into a matrix
+matrix stats = zeros(2,13)
+matrix stats[1,] = SupAF1 ~ critSupWald[cols(Z)-cols(X),1] ~ critSupWald[cols(Z)-cols(X),2] ~ critSupWald[cols(Z)-cols(X),3] ~ BpAF1 ~ AVAF1 ~ critAvgWald[cols(Z)-cols(X),1] ~ critAvgWald[cols(Z)-cols(X),2] ~ critAvgWald[cols(Z)-cols(X),3] ~ ExpAF1 ~ critExpWald[cols(Z)-cols(X),1] ~ critExpWald[cols(Z)-cols(X),2] ~ critExpWald[cols(Z)-cols(X),3]
+
+matrix stats[2,] = SupOT ~ critSupOT[cols(Z)-cols(X),1] ~ critSupOT[cols(Z)-cols(X),2] ~ critSupOT[cols(Z)-cols(X),3] ~ BpOT ~ AVOT ~ critAvgOT[cols(Z)-cols(X),1] ~ critAvgOT[cols(Z)-cols(X),2] ~ critAvgOT[cols(Z)-cols(X),3] ~ ExpOT ~ critExpOT[cols(Z)-cols(X),1] ~ critExpOT[cols(Z)-cols(X),2] ~ critExpOT[cols(Z)-cols(X),3]
+
+colnames(stats, &quot;SupStat CV10%Sup CV5%Sup CV1%Sup Breakp AvgStat CV10%Avg CV5%Avg CV1%Avg ExpStat CV10%Exp CV5%Exp CV1%Exp&quot;)
+rownames(stats, &quot;Wald OT&quot;)
+
+set echo off
+set messages off
+printf &quot;Structural stability tests with unknown break point (Equation Sample: @first to @last) \n&quot;
+printf &quot;=======================================================================\n&quot;
+printf &quot;Test		Sup		Date		Avg.		Exp \n&quot;
+printf &quot;Wald		%.3f		%s		%.3f		%.3f \n&quot;, SupAF1, BPAF1, AVAF1, ExpAF1
+printf &quot;CV 10%%		%.2f				%.2f		%.2f \n&quot;, critSupWald[cols(X),1], critAvgWald[cols(X),1], critExpWald[cols(X),1]
+printf &quot;CV 5%%		%.2f				%.2f		%.2f \n&quot;, critSupWald[cols(X),2], critAvgWald[cols(X),2], critExpWald[cols(X),2]
+printf &quot;CV 1%%		%.2f				%.2f		%.2f \n&quot;, critSupWald[cols(X),3], critAvgWald[cols(X),3], critExpWald[cols(X),3]
+printf &quot;-----------------------------------------------------------------------\n&quot;
+printf &quot;OT		%.3f		%s		%.3f		%.3f \n&quot;, SupOT, BPOT, AVOT, ExpOT
+printf &quot;CV 10%%		%.2f				%.2f		%.2f \n&quot;, critSupOT[cols(Z)-cols(X),1], critAvgOT[cols(Z)-cols(X),1], critExpOT[cols(Z)-cols(X),1]
+printf &quot;CV 5%%		%.2f				%.2f		%.2f \n&quot;, critSupOT[cols(Z)-cols(X),2], critAvgOT[cols(Z)-cols(X),2], critExpOT[cols(Z)-cols(X),2]
+printf &quot;CV 1%%		%.2f				%.2f		%.2f \n&quot;, critSupOT[cols(Z)-cols(X),3], critAvgOT[cols(Z)-cols(X),3], critExpOT[cols(Z)-cols(X),3]
+printf &quot;=======================================================================\n&quot;
+
+
+
+
+smpl @startsub1 @endesub1
+genr series AF1s = AF1
+genr series crit1
+#gnuplot AF1s --time-series --with-lines --output=display
+genr series OTs = OT
+#gnuplot AF1s OTs --time-series --with-lines --output=display
+
+#print stats
+return stats
+</code>
+</gretl-function>
+<sample-script>
+/*
+   Recursive Chow (Andrews-Fair) Wald test
+   Replicate Greene, ch. 7 stability tests
+*/
+set echo off
+open C:\Users\artur.tarassow\Programme\gretl\data\greene\greene5_1.gdt
+
+##Data
+smpl 1950:1 2000:4
+genr series m = log(M1)
+genr series p = log(cpi_u)
+genr series y = log(realgdp)
+genr series mr = m - p
+genr series i = tbilrate
+
+scalar plag = 2
+scalar plead = 0
+
+#Specification
+#Dependent
+matrix Y = { mr }	#dep. var
+
+#Independent
+list x = const y i
+matrix X = { x }			#indep. var
+
+#Instruments
+##1 BENCHMARK  spec.
+list z = const y(-1) i(-1 to -plag)
+matrix Z = { z }			#instruments
+
+#GMM - initials
+matrix W = inv(Z'Z)		#initial weights
+matrix b = ones(nelem(x),1)
+set hac_lag 4
+
+#############################################################
+/*
+function matrix afwsunkwn (
+    series y &quot;Dependent variable&quot;,
+    list x &quot;List of independend variables&quot;,
+    list z &quot;List of instruments&quot;,
+    scalar trim &quot;Trimming in %&quot;,
+    scalar maxlag &quot;Max. lag length in x/z&quot;,
+    scalar maxlead &quot;Max. lead length in x/z&quot;
+*/
+    
+test = afwsunkwn(mr, x, z, 0.15, plag, plead)
+</sample-script>
+</gretl-function-package>
+</gretl-functions>
